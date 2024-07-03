@@ -1,0 +1,328 @@
+import pandas as pd
+import glob
+import os
+from itertools import product
+
+
+##### load config and sample sheets #####
+configfile: "ID_neutral_regions_config.yaml"
+
+##############################################
+##############################################
+#######Config file looks like this:######### 
+
+
+##############################################
+##############################################
+
+#maize_v5_annotation = config['maize_v4_annotation']
+
+reference = config["reference_fa"]
+
+#Load Samples from the CSV file - index the important ones
+RNA_samples = config["RNA_samples"].split()
+#RNA_samples.index = RNA_samples.index.set_levels([i.astype(str) for i in RNA_samples.index.levels])
+
+kb_up_down = "00.data/" + str(config['bed_base']) + "_1kb_up_down.bed"
+
+genome_filter_number = int(config['cactus_genome_number']) - 3
+
+
+
+
+
+rule all:
+    input:
+        expand("00.data/reference/{reference}_index", reference = reference),
+        expand("01.STAR_ALIGNMENTS/{samples}_Aligned.sortedByCoord.out.bam",
+                samples=RNA_samples),
+        #expand("03.filtering_genomes/blastp_results/{reference}.no_genes_1kb.no_scACRs.txt",
+        #        reference = config['bed_base']),
+        #expand("04.RNA_seq_depth_per_region/{bed_base}.no_genes_1kb.no_scACRs.noORFs.region_RNA_seq_hist.bed", 
+        #        bed_base = config['bed_base']),
+        #expand("05.genome_alignment_intersecting_regions/{bed_base}_all_genomes_aligned.bg",
+        #        bed_base = config['bed_base']),
+        expand("07.neutral_regions/{bed_base}.neutral_region_interseciton.filtered_hq.bed",
+                bed_base = config['bed_base'])
+        
+
+rule trim_reads:
+    input:
+        fq_samp = "00.data/rna_seq/raw/{samples}_all.fastq"
+    params:
+       "00.data/rna_seq/{samples}.log"
+    output:
+       "00.data/rna_seq/trimmed/{samples}_trimmed.fq"
+    threads: 5
+    message: """Trimming"""
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    java -jar /apps/eb/Trimmomatic/0.39-Java-1.8.0_144/trimmomatic-0.39.jar \
+    SE -threads {threads} -phred33 {input} {output} \
+    ILLUMINACLIP:/scratch/jpm73279/04.lncRNA/02.Analysis/23.generate_all_metaplots/00.data/adapter.fa:2:30:10 \
+    LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36
+    """
+
+rule generate_star_index:
+    input:
+        config["reference_fa"]
+    output:
+        directory("00.data/reference/{reference}_index")
+    threads:
+        10
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    mkdir {output}
+
+    STAR --runMode genomeGenerate \
+    --genomeDir {output} \
+    --genomeFastaFiles {input} \
+    --runThreadN {threads} ;
+    """
+
+rule generate_genome_index:
+    input:
+        "00.data/reference/{reference}.fa"
+    params:
+        "00.data/reference/{reference}.fa.fai"
+    output:
+       "00.data/reference/{reference}.chrom.sizes"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:""" 
+        samtools faidx {input} > {params}
+
+        awk -v OFS="\t" {{'print $1,$2'}} {params} > {output}
+        """
+
+
+rule align_reads_to_genomes:
+    input:
+        index_dir=expand("00.data/reference/{reference}_index",reference = reference),
+        fq_samp = "00.data/rna_seq/trimmed/{samples}_trimmed.fq"
+    threads: 
+        10
+    params:
+        "01.STAR_ALIGNMENTS/{samples}_"
+    output:
+        "01.STAR_ALIGNMENTS/{samples}_Aligned.sortedByCoord.out.bam"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+        STAR --runThreadN {threads} \
+        --genomeDir {input.index_dir} \
+        --readFilesIn {input.fq_samp} \
+        --outSAMmapqUnique 255 \
+        --alignIntronMax 100000 \
+        --outSAMtype BAM SortedByCoordinate \
+        --outFileNamePrefix {params}
+    """
+
+#To assay the quality of ATAC libraries - we need to see the proportion of TN5
+#integration sites 1kb upstream and downstream of genes. This below method uses
+#Bioawk to generate this bed file from a gene bed file
+
+
+rule generate_genome_bed:
+    input:
+        config['reference_fa']
+    params:
+        config['reference_fa'] + ".fai"
+    output:
+       "00.data/bed_files/" + config["bed_base"] + ".chrom.bed"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:""" 
+        samtools faidx {input} -o {params}
+
+        awk -v OFS="\t" {{'print $1,1,$2'}} {params} > {output}
+        """
+
+rule generate_plus_minus_1kb_bed: 
+    message:"Generating Bed up and Down"
+    input:
+        original_gene_bed = config["gene_annotation_bed_file"]
+    output:
+        kb_up_down = "00.data/bed_files/" + config['bed_base'] + "genes_1kb_up_down.bed"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    bioawk -c bed '{{if($strand=="+"){{print $chrom,$start-1000,$start+1000,$name,0,$strand}} \
+    else if($strand=="-"){{print $chrom,$end-1000,$end+1000,$name,0,$strand}} }}' \
+    {input.original_gene_bed} | awk '$2 > 0 {{print $0}}' | bedtools sort -i - > {output.kb_up_down}
+    """
+
+rule filter_out_genes_genome_bed:
+    input:
+        kb_up_down = "00.data/bed_files/" + config['bed_base'] + "genes_1kb_up_down.bed",
+        genome_bed = "00.data/bed_files/" + config["bed_base"] + ".chrom.bed"
+    output:
+       "03.filtering_genomes/{bed_base}.no_genes_1kb.bed"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:""" 
+    bedtools subtract -a {input.genome_bed} -b {input.kb_up_down} > {output}
+        """
+
+rule filter_out_scACRS:
+    input:
+       genome_bed = "03.filtering_genomes/{bed_base}.no_genes_1kb.bed", 
+       sc_ACRS = config['scATAC_bed_file']
+    output:
+       "03.filtering_genomes/{bed_base}.no_genes_1kb.no_scACRs.bed"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+
+    shell:""" 
+    bedtools subtract -a {input.genome_bed} -b {input.sc_ACRS} > {output}
+        """
+
+rule generate_fasta_from_non_genic_bed:
+    input:
+       genome_bed = "03.filtering_genomes/{bed_base}.no_genes_1kb.no_scACRs.bed",
+       genome_fasta = config["reference_fa"]
+    output:
+       "03.filtering_genomes/blastp_genome/{bed_base}.no_genes_1kb.no_scACRs.fa"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    bedtools getfasta -fi {input.genome_fasta} -bed {input.genome_bed} > {output}
+    """
+
+rule blastp_against_remaining_genome:
+    input:
+       "03.filtering_genomes/blastp_genome/{bed_base}.no_genes_1kb.no_scACRs.fa"
+    params:
+        protein_seq = config["protein_fasta"],
+        DB_blast = "03.filtering_genomes/blastp_genome/{bed_base}_DB"
+    threads: 30
+    message: """Running Tblastn"""
+    output:
+       blast_output_file = "03.filtering_genomes/blastp_results/{bed_base}.no_genes_1kb.no_scACRs.txt"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    makeblastdb -in {input} -dbtype nucl -out {params.DB_blast} -parse_seqids
+
+    tblastn -db {params.DB_blast} -query {params.protein_seq} -out {output} -num_threads {threads} -outfmt 6
+    """
+
+rule filter_blast_results_generate_subtraction_regions:
+    input:
+       blast_output_file = "03.filtering_genomes/blastp_results/{bed_base}.no_genes_1kb.no_scACRs.txt"
+    output:
+       hidden_orf_bed = "03.filtering_genomes/blastp_results/{bed_base}.no_genes_1kb.no_scACRs.hidden_orfs.bed"
+    message: """Identifying regions of the genome which might have hidden ORFs"""
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    python scripts/fitler_blastp_genome_result.py -i {input.blast_output_file} | bedtools sort -i - | uniq > {output.hidden_orf_bed}
+    """
+
+rule remove_hidden_orfs:
+    input:
+       hidden_orf_bed = "03.filtering_genomes/blastp_results/{bed_base}.no_genes_1kb.no_scACRs.hidden_orfs.bed",
+       genome_bed = "03.filtering_genomes/{bed_base}.no_genes_1kb.no_scACRs.bed",
+    output:
+       genome_bed_no_ORFs = "03.filtering_genomes/{bed_base}.no_genes_1kb.no_scACRs.noORFs.bed",
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    bedtools subtract -a {input.genome_bed} -b {input.hidden_orf_bed} > {output.genome_bed_no_ORFs}
+    """
+
+rule take_bed_depth_hist:
+    input:
+       genome_bed_no_ORFs = "03.filtering_genomes/{bed_base}.no_genes_1kb.no_scACRs.noORFs.bed",
+       all_RNA_seq_files = expand("01.STAR_ALIGNMENTS/{samples}_Aligned.sortedByCoord.out.bam", samples=RNA_samples)
+    output:
+       RNA_seq_hist = "04.RNA_seq_depth_per_region/{bed_base}.no_genes_1kb.no_scACRs.noORFs.region_RNA_seq_hist.bed"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    bedtools subtract -a {input.genome_bed_no_ORFs} -b {input.all_RNA_seq_files} -sorted > {output.RNA_seq_hist}
+    """
+
+#rule take_bed_depth:
+#    input:
+#       genome_bed_no_ORFs = "03.filtering_genomes/{bed_base}.no_genes_1kb.no_scACRs.noORFs.bed",
+#       all_RNA_seq_files = expand("01.STAR_ALIGNMENTS/{samples}_Aligned.sortedByCoord.out.bam", samples=RNA_samples)
+#    output:
+#       RNA_seq_depth= "04.RNA_seq_depth_per_region/{bed_base}.no_genes_1kb.no_scACRs.noORFs.RNA_seq_depth_1bp.bed"
+#    shell:"""
+#    bedtools coverage -a {input.genome_bed_no_ORFs} -b {input.all_RNA_seq_files} -sorted -d | awk '$5 > 0 {{print $0}}' > {output.RNA_seq_depth}
+#    """
+
+
+
+rule filter_based_off_read_depth:
+    input:
+       RNA_seq_hist = "04.RNA_seq_depth_per_region/{bed_base}.no_genes_1kb.no_scACRs.noORFs.region_RNA_seq_hist.bed"
+    params:
+        fitler_value = 30 
+    output:
+       "04.RNA_seq_depth_per_region/filtered/{bed_base}.no_genes_1kb.no_scACRs.noORFs.filtered.less_50.bed"
+    message:"""Filtering Read Depth histogram"""
+    shell:"""
+    cat {input.RNA_seq_hist} > {output}
+    """
+
+
+rule filter_bases_off_prcnt_A:
+    input:
+       "04.RNA_seq_depth_per_region/filtered/{bed_base}.no_genes_1kb.no_scACRs.noORFs.filtered.less_50.bed"
+    output:
+       "04.RNA_seq_depth_per_region/filtered/{bed_base}.no_genes_1kb.no_scACRs.noORFs.filtered.less_50.prcntA_filtered.bed"
+    message:"""Filtering based off prcntA aligned to"""
+    shell:"""
+    cat {input} > {output}
+    """
+
+
+rule remove_chip_seq_peaks:
+    input:
+       region_remaining = "04.RNA_seq_depth_per_region/filtered/{bed_base}.no_genes_1kb.no_scACRs.noORFs.filtered.less_50.prcntA_filtered.bed",
+       chip_seq_regions = expand("00.data/chip_beds/{sample}.sorted.renamed.bed", sample = config["chip_seq_samples"])
+    output:
+       region_left = "05.filtered_chip_seq/{bed_base}.no_genes_1kb.no_scACRs.noORFs.filtered.no_RNA.no_chipseq.bed"
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    bedtools subtract -a {input.region_remaining} -b {input.chip_seq_regions} > {output.region_left}
+    """
+
+
+
+rule bw_to_bedgraph:
+    input:
+        bw_genome_algn = config['cactus_bw_alignment']
+    output:
+        "06.genome_alignment_intersecting_regions/{bed_base}_all_genomes_aligned.bg"
+    message:"""Converting whole genome alignment to Bed file"""
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    shell:"""
+    bigWigToBedGraph {input.bw_genome_algn} {output}
+    """
+
+
+rule intersecting_filtered_regions_w_genome_alignment:
+    input:
+        passing_regions = "05.filtered_chip_seq/{bed_base}.no_genes_1kb.no_scACRs.noORFs.filtered.no_RNA.no_chipseq.bed",
+        bg_file = "06.genome_alignment_intersecting_regions/{bed_base}_all_genomes_aligned.bg"
+    params:
+        genome_number = genome_filter_number
+    output:
+        passing_regions_all = "07.neutral_regions/{bed_base}.neutral_region_interseciton.all.bed",
+        passing_regions_hq = "07.neutral_regions/{bed_base}.neutral_region_interseciton.filtered_hq.bed",
+    conda:
+        "envs/neutral_seq_ID.2022-02-22.yml"
+    message:""" Identifying Neutral Sites"""
+    shell:"""
+    bedtools intersect -a {input.passing_regions} -b {input.bg_file} -wa -wb | bedtools groupby -i - -g 1,2,3 -c 7 -o mean > {output.passing_regions_all}
+
+    bioawk -c bed '($NF > {params.genome_number}) && ($end - $start > 20) {{print $0}}' {output.passing_regions_all} > {output.passing_regions_hq}
+    """
+
