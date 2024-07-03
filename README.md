@@ -4,6 +4,6 @@ Scripts and code used in the analysis of [The genetic architecture of single-cel
 
 ## Data sets
 
-Raw and processed data from this study were deposited to NCBI GEO: [GSEXXXXXX](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE155178)
+Raw and processed data from this study can be found at NCBI GEO: [GSEXXXXXX](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE155178)
 
 
