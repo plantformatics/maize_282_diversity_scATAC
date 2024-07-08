@@ -1,0 +1,64 @@
+###Convert ACR signals and CPM values into a 0-2 numeric format (genotype) that is compatible with the rMVP package###
+
+#!/usr/bin/env python
+import pandas as pd
+
+# Read the input CPM or ACR signal matrics file
+df = pd.read_csv('matrics.txt', sep='\t')
+
+# Define a function to normalize a row to a 0-2 numeric format
+def normalize_row(row):
+    min_val = row.min()
+    max_val = row.max()
+    if max_val != min_val:
+        return (row - min_val) * 2 / (max_val - min_val)
+    else:
+        return row
+
+# Apply the normalization function to each row of the dataframe, excluding the first column
+df.iloc[:, 1:] = df.iloc[:, 1:].apply(normalize_row, axis=1)
+
+# Write the normalized dataframe to an output file
+df.to_csv('normalized_numeric.txt', sep='\t', index=False)
+
+
+
+
+
+-------------------------------------------rMVP Rscript--------------------------------------------------
+-----Data_format-----
+###genotype_data_format###
+#1	0.2	0.55	0	0.4
+#0.2554	1.77	0.85	1.2	2
+#2	0.798	0.147	1.1	1.2
+
+###map_data_format###
+#SNP	Chr	Pos
+#Marker1	1	100
+#Marker2	1	125
+#Marker3	1	201
+
+###phenotype_data_format###
+#Taxa	trait1	trait2	trait3
+#G282set_33-16	-1.742691376	-0.604592729	-1.038902239
+#G282set_38-11	-2.611048471	0.748509409	0.398233361
+#G282set_A188	-37.35200467	1.149428562	0.136935979
+#G282set_A441-5	-42.70852594	0.147130681	0.136935979
+
+-----Data_imput-----
+library(rMVP)
+library(bigmemory)
+genotype <-read.big.matrix("genotype_numeric.txt",head=F,sep="\t")
+phenotype <- read.table("49traits.txt",head=TRUE)
+map <- read.table("marker_information.txt" , head = TRUE)
+
+
+-----Start_association_analysis (for GWAS; FarmCPU model)-----
+for(i in 2:ncol(phenotype)){
+imMVP <- MVP(phe=phenotype[, c(1, i)],geno=genotype,map=map,nPC.FarmCPU=3,method.bin="FaST-LMM",maxLoop=10,priority="memory",threshold=0.05, method="FarmCPU",file.output=c("pmap", "pmap.signal"))
+}
+
+-----Start_association_analysis (for TWAS and CWAS; MLM model)-----
+for(i in 2:ncol(phenotype)){
+imMVP <- MVP(phe=phenotype[, c(1, i)],geno=genotype,map=map,nPC.MLM=3,maxLoop=10,priority="memory",threshold=0.05, method="MLM",file.output=c("pmap", "pmap.signal"))
+}
