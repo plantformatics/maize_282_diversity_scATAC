@@ -6,6 +6,6 @@ Scripts and code used in the analysis of [The genetic architecture of cell-type-
 
 Raw and processed data from this study can be found at NCBI GEO: [GSE275410](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE275410)
 
-A number of additional processed data sets are also available as Supplemental files in [publication](https://marand-lab.github.io/publications/)
+A number of additional processed data sets are also available as Supplemental files in [publication](https://marand-lab.github.io/publications/) and on [Dryad](https://doi.org/10.5061/dryad.gxd2547vt).
 
 Normalized pseudobulk coverages by genotype can be viewed at the publicly available [Plant Epigenome Browser](https://epigenome.genetics.uga.edu/PlantEpigenome/?data=maize_v5) hosted by the Schmitz lab. 
