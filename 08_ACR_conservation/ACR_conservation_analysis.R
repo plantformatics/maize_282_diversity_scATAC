@@ -340,11 +340,11 @@ gw.te$dispensable.p <- gw.te$dispensable/sum(gw.te$dispensable)
 ##### compare fixed te-ACRs classess #####
 ##########################################
 
-# add teosinte information
+# add information from the 21 teosinte 
 shared.ids <- intersect(rownames(df), rownames(teo))
 df <- df[shared.ids,]
 teo <- teo[shared.ids,]
-df$teo_con <- ifelse((rowMeans(teo) > 0.9, 1, 0))
+df$teo_con <- ifelse((rowSums(teo <= 0.1) = ncol(teo), 0, 1))
 
 # maize fixed te-ACRs
 fixed <- subset(df, df$conserved=="G1" & df$olTE==1 & df$teo_con==0)
