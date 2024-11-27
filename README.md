@@ -10,4 +10,6 @@ A number of additional processed data sets are also available as Supplemental fi
 
 Permenantly archived versions of the code in this repository can also be found on [Zenodo](https://doi.org/10.5281/zenodo.14230113).
 
+[![DOI](https://zenodo.org/badge/823660235.svg)](https://doi.org/10.5281/zenodo.14230639)
+
 Normalized pseudobulk coverages by genotype can be viewed at the publicly available [Plant Epigenome Browser](https://epigenome.genetics.uga.edu/PlantEpigenome/?data=maize_v5) hosted by the Schmitz lab. 
